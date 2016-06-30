@@ -18,25 +18,23 @@ fn read_file(path: &Path) -> String {
 }
 
 fn parse(content: String) {
-    let re = Regex::new(r"(\r\n|\r|\n)\s\s+").unwrap();
-    let prepared = re.replace_all(&content, "\r\n");
-    // println!("{:?}", prepared);
+    let re = Regex::new(r"\S.*\z").unwrap();
+    let prepared = re.replace_all(&content, "\n\n");
+    let mut result: Vec<Line> = vec![];
 
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"(?sx)
+        static ref RE: Regex = Regex::new(r"(?x)
             (\d+)
             (\r\n|\r|\n)
             (\d{2}):(\d{2}):(\d{2}),(\d{3})
             \s-->\s
             (\d{2}):(\d{2}):(\d{2}),(\d{3})
             (\r\n|\r|\n)
-            (.*)
+            ([\s\S]*?)
             (\r\n|\r|\n){2}").unwrap();
     }
 
-
     for cap in RE.captures_iter(&prepared) {
-        println!("------------------", );
         let start_timestamp = [cap.at(3).unwrap().parse::<u32>().unwrap(),
                                cap.at(4).unwrap().parse::<u32>().unwrap(),
                                cap.at(5).unwrap().parse::<u32>().unwrap(),
@@ -58,7 +56,7 @@ fn parse(content: String) {
             end: end,
             duration: end - start,
         };
-        println!("{}", line);
+        result.push(line)
     }
 }
 
