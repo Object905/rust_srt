@@ -9,30 +9,12 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 use std::fmt;
-use std::io::Error;
+use std::result;
 
-fn read_file(path: &Path) -> Result<String, Error> {
-    let mut file = match File::open(&path) {
-        Ok(file) => file,
-        Err(e) => return Err(e),
-    };
-    let mut content = String::new();
-    file.read_to_string(&mut content).unwrap();
-    Ok(content)
-}
+type Result<T> = result::Result<T, String>;
 
-fn parse(content: &mut String) -> Subtitles {
-    let eof_space_remover = Regex::new(r"\S\s*?\z").unwrap();
-    let content = eof_space_remover.replace_all(&content, "\r\n\r\n");
-    let newline_unificator =
-        Regex::new(r"([^\n(\r\n)]\r[^\n(\r\n)])|([^\r(\r\n)]\n[^\r(\r\n)])") // to win style
-        .unwrap(); // may fail to mixed style
-    let content = newline_unificator.replace_all(&content, "\r\n");
-
-    let mut result: Vec<Line> = vec![];
-
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"(?x)
+lazy_static! {
+        pub static ref SUBS: Regex = Regex::new(r"(?x)
             (\d+)
             (\r\n)
             (\d{2}):(\d{2}):(\d{2}),(\d{3})
@@ -43,7 +25,17 @@ fn parse(content: &mut String) -> Subtitles {
             (\r\n){2}?").unwrap();
     }
 
-    for cap in RE.captures_iter(&content) {
+fn read_file(path: &Path) -> Result<String> {
+    let mut file = try!(File::open(&path).map_err(|e| e.to_string()));
+    let mut content = String::new();
+    try!(file.read_to_string(&mut content).map_err(|e| e.to_string()));
+    Ok(content)
+}
+
+fn parse(content: String) -> Subtitles {
+    let mut result: Vec<Line> = vec![];
+
+    for cap in SUBS.captures_iter(&content) {
         let start_timestamp = [cap.at(3).unwrap().parse::<u32>().unwrap(),
                                cap.at(4).unwrap().parse::<u32>().unwrap(),
                                cap.at(5).unwrap().parse::<u32>().unwrap(),
@@ -79,7 +71,7 @@ fn to_miliseconds(timestamp: &[u32; 4]) -> u32 {
     result
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Line {
     text: String,
     index: u32,
@@ -108,6 +100,10 @@ impl Line {
         self.start
     }
 
+    fn get_start_timestamp(&self) -> [u32;4] {
+        self.start_timestamp
+    }
+
     fn get_end(&self) -> u32 {
         self.end
     }
@@ -133,27 +129,31 @@ impl fmt::Display for Subtitles {
 }
 
 impl Subtitles {
-    fn at_index(&self, index: usize) -> &Line {
-        &self.field[index - 1]
+    fn at_index(&self, index: usize) -> Option<Line> {
+        self.field.get(index - 1).map(|n| n.clone())
     }
 
     fn get_length(&self) -> usize {
         self.field.len()
     }
 
-    fn by_timestamp(&self, timestamp: [u32; 4]) -> Option<&Line> {
+    fn by_timestamp(&self, timestamp: [u32; 4]) -> Option<Line> {
         let miliseconds = to_miliseconds(&timestamp);
+        self.by_miliseconds(miliseconds)
+    }
+
+    fn by_miliseconds(&self, time: u32) -> Option<Line> {
         let mut min = 0;
         let mut max = self.field.len() - 1;
         let mut guess_index;
 
-        while max > min {
+        while max >= min {
             guess_index = (max + min) / 2;
             let guess = &self.field[guess_index];
 
-            if (guess.start <= miliseconds) && (miliseconds <= guess.end) {
-                return Some(guess);
-            } else if miliseconds > guess.end {
+            if (guess.start <= time) && (time <= guess.end) {
+                return Some(guess.clone());
+            } else if time > guess.end {
                 min = guess_index + 1;
             } else {
                 max = guess_index - 1;
@@ -163,22 +163,28 @@ impl Subtitles {
     }
 }
 
-fn prepare(path: &str) -> Result<Subtitles, Error> {
+fn prepare(path: &str) -> Result<Subtitles> {
     let sub_path = Path::new(path);
-    let mut content = match read_file(&sub_path) {
-        Ok(content) => content,
-        Err(e) => return Err(e),
+    let mut content = try!(read_file(&sub_path).map_err(|e| e.to_string()));
 
-    };
-    let subs = parse(&mut content);
-    Ok(subs)
+    let eof_empty_lines = Regex::new(r"\S\s*?\z").unwrap();
+    let unify_newline_style = Regex::new(r"(?x)
+            ([^\n(\r\n)]\r[^\n(\r\n)])|
+            ([^\r(\r\n)]\n[^\r(\r\n)])").unwrap();
+
+    content = eof_empty_lines.replace_all(&content, "\r\n\r\n");
+    content = unify_newline_style.replace_all(&content, "\r\n");
+
+    if !SUBS.is_match(&content){ return Err("Bad srt file".to_string()); }
+
+    Ok(parse(content))
 }
 
 #[test]
 fn it_works() {
-    let path = "/home/obj/ex1";
+    let path = "ex1";
     let subs = prepare(path).unwrap();
-    println!("{}", subs.at_index(3));
-    println!("{}", subs.at_index(619));
-    println!("{}", subs.at_index(13));
+    println!("{}", subs.at_index(3).unwrap());
+    println!("{}", subs.by_miliseconds(261072).unwrap());
+    println!("{}", subs.by_timestamp([0, 4, 22, 500]).unwrap());
 }
