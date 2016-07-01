@@ -22,21 +22,25 @@ fn read_file(path: &Path) -> Result<String, Error> {
 }
 
 fn parse(content: &mut String) -> Subtitles {
-    let re = Regex::new(r"\S\s*?\z").unwrap();
-    let content = re.replace_all(&content, "\r\n\r\n");
-    println!("{:?}", content);
+    let eof_space_remover = Regex::new(r"\S\s*?\z").unwrap();
+    let content = eof_space_remover.replace_all(&content, "\r\n\r\n");
+    let newline_unificator =
+        Regex::new(r"([^\n(\r\n)]\r[^\n(\r\n)])|([^\r(\r\n)]\n[^\r(\r\n)])") // to win style
+        .unwrap(); // may fail to mixed style
+    let content = newline_unificator.replace_all(&content, "\r\n");
+
     let mut result: Vec<Line> = vec![];
 
     lazy_static! {
         static ref RE: Regex = Regex::new(r"(?x)
             (\d+)
-            (\r\n|\r|\n)
+            (\r\n)
             (\d{2}):(\d{2}):(\d{2}),(\d{3})
             \s-->\s
             (\d{2}):(\d{2}):(\d{2}),(\d{3})
-            (\r\n|\r|\n)
+            (\r\n)
             ([\S\s]*?)
-            (\r\n|\r|\n){2}?").unwrap();
+            (\r\n){2}?").unwrap();
     }
 
     for cap in RE.captures_iter(&content) {
