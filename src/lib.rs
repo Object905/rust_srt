@@ -5,29 +5,29 @@ use regex::Regex;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-use std::fmt;
+//use std::fmt;
 use std::result;
+use std::fmt::{Display, Formatter};
 
 pub type Result<T> = result::Result<T, String>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SubLine {
-    text: String,
-    index: u32,
-    start: u32,
-    end: u32,
+    pub text: String,
+    pub index: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
-impl fmt::Display for SubLine {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Display for SubLine {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let start = recover_timestamp(&self.start);
+        let end = recover_timestamp(&self.end);
         write!(f,
-               "{}\n{:?} --> {:?} ({}>>{})\n{}",
-               self.index,
-               self.start,
-               self.end,
-               self.start,
-               self.end,
-               self.text)
+               "{index}\r\n\
+{s_h:02}:{s_m:02}:{s_s:02},{s_ms:03} --> {e_h:02}:{e_m:02}:{e_s:02},{e_ms:03}\r\n\
+{text}\r\n\r\n", index=self.index, s_h=start[0], s_m=start[1], s_s=start[2], s_ms=start[3],
+            e_h=end[0], e_m=end[1], e_s=end[2], e_ms=end[3], text=self.text)
     }
 }
 
@@ -36,24 +36,12 @@ impl SubLine {
         self.start
     }
 
-    pub fn get_text(&self) -> String {
-        self.text.clone()
-    }
-
     pub fn get_start_timestamp(&self) -> [u32; 4] {
         recover_timestamp(&self.start)
     }
 
     pub fn get_end_timestamp(&self) -> [u32; 4] {
         recover_timestamp(&self.end)
-    }
-
-    pub fn get_index(&self) -> u32 {
-        self.index
-    }
-
-    pub fn get_end(&self) -> u32 {
-        self.end
     }
 
     pub fn get_duration(&self) -> u32 {
@@ -79,6 +67,8 @@ impl SubLine {
 }
 
 trait SubLineVector {
+    fn insert_line(&mut self, item: SubLine);
+
     fn by_index(&self, index: usize) -> Option<&SubLine>;
     fn by_index_mut(&mut self, index: usize) -> Option<&mut SubLine>;
 
@@ -94,16 +84,41 @@ trait SubLineVector {
 
     fn by_miliseconds(&self, time: u32) -> Option<&SubLine>;
     fn by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine>;
+
+    fn save_to(&self, path: &str) -> Result<()>;
 }
 
 pub type Subtitles = Vec<SubLine>;
 
 impl SubLineVector for Subtitles {
+    fn insert_line(&mut self, item: SubLine) {
+        let vector_index = (item.index - 1) as usize;
+        let index = item.index as usize;
+        self.insert(vector_index, item);
+        for i in &mut self[index..] {
+            i.index += 1
+        }
+    }
+    
+    fn save_to(&self, path: &str) -> Result<()> {
+        let mut file = try!(File::create(&path).map_err(|e| e.to_string()));
+        for line in self {
+            let start = line.get_start_timestamp();
+            let end = line.get_end_timestamp();
+            try!(write!(&mut file, "{index}\r\n\
+{s_h:02}:{s_m:02}:{s_s:02},{s_ms:03} --> {e_h:02}:{e_m:02}:{e_s:02},{e_ms:03}\r\n\
+{text}\r\n\r\n", index=line.index, s_h=start[0], s_m=start[1], s_s=start[2], s_ms=start[3],
+            e_h=end[0], e_m=end[1], e_s=end[2], e_ms=end[3], text=line.text).map_err(|e| e.to_string() ));
+        }
+        try!(write!(&mut file, "\r\n").map_err(|e| e.to_string()));
+        Ok(())
+    }
+
     fn by_index(&self, index: usize) -> Option<&SubLine> {
         self.get(index - 1)
     }
 
-    fn by_index_mut(&mut self, index: usize) -> Option<&mut SubLine>{
+    fn by_index_mut(&mut self, index: usize) -> Option<&mut SubLine> {
         self.get_mut(index - 1)
     }
 
@@ -184,9 +199,10 @@ lazy_static! {
             (\r\n)
             ([\S\s]*?)
             (\r\n){2}?").unwrap();
-    }
+}
 
-fn read_file(path: &Path) -> Result<String> {
+fn read_file(sub_path: &str) -> Result<String> {
+    let path = Path::new(sub_path);
     let mut file = try!(File::open(&path).map_err(|e| e.to_string()));
     let mut content = String::new();
     try!(file.read_to_string(&mut content).map_err(|e| e.to_string()));
@@ -221,10 +237,8 @@ fn parse(content: String) -> Subtitles {
 }
 
 pub fn prepare(path: &str) -> Result<Subtitles> {
-    let sub_path = Path::new(path);
-    let mut content = try!(read_file(&sub_path).map_err(|e| e.to_string()));
-
-    let eof_empty_lines = Regex::new(r"\S\s*?\z").unwrap();
+    let mut content = try!(read_file(&path).map_err(|e| e.to_string()));
+    let eof_empty_lines = Regex::new(r"\s*?\z").unwrap();
     let unify_newline_style = Regex::new(r"(?x)
             ([^\n(\r\n)]\r[^\n(\r\n)])|
             ([^\r(\r\n)]\n[^\r(\r\n)])")
@@ -240,25 +254,65 @@ pub fn prepare(path: &str) -> Result<Subtitles> {
     Ok(parse(content))
 }
 
-
 #[test]
 fn test1 () {
-    let path = "ex1";
+    let path = "result";
     let mut subs = prepare(path).unwrap();
-    let test = subs.by_index(3).unwrap().clone();
+    let mut test = subs.by_miliseconds(261072).unwrap().clone();
+    let test_index = test.index as usize;
 
     {
-        let another_one = subs.by_miliseconds(261072).unwrap();
+        let another_one = subs.by_index(test_index).unwrap();
         let same_line = subs.by_timestamp(&[0, 4, 22, 500]).unwrap();
-        assert_eq!(test.get_index(), same_line.get_index());
-        assert_eq!(same_line.get_index(), another_one.get_index());
+        assert_eq!(&test, same_line);
+        assert_eq!(another_one, same_line);
     }
     {
-        let mut mutline = subs.by_index_mut(3).unwrap();
+        let mut mutline = subs.by_index_mut(test_index).unwrap();
         mutline.shift(-5).unwrap();
     }
     {
-        let changed_line = subs.by_index(3).unwrap();
+        let changed_line = subs.by_index(test_index).unwrap();
         assert_eq!(changed_line.get_start(), test.get_start() - 5);
+        test.start -= 5;
+        test.end -= 5;
     }
+    {
+        let newline = SubLine {
+            index: 1,
+            start: 0,
+            end: 50,
+            text: "New first line".to_string() };
+        subs.insert_line(newline);
+        let fourh_line = subs.by_index((test.index + 1) as usize).unwrap();
+        test.index += 1; 
+        assert_eq!(&test, fourh_line);
+    }
+    {
+        let new_last = SubLine {
+            index: ((subs.len() as u32) - 1),
+            start: to_miliseconds(&[1, 7, 0, 500]),
+            end: to_miliseconds(&[1, 8, 10, 500]),
+            text: "New last line".to_string() };
+
+        let mut current_last = subs.last_mut().unwrap();
+        std::mem::replace(current_last, new_last);
+    }
+    {
+        let new_current_last = SubLine {
+            index: ((subs.len() as u32) - 1),
+            start: to_miliseconds(&[1, 7, 0, 500]),
+            end: to_miliseconds(&[1, 8, 10, 500]),
+            text: "New last line".to_string() };
+
+        let current_last = subs.last().unwrap();
+        assert_eq!(&new_current_last, current_last);
+    }
+    {
+        for i in &mut subs {
+            i.end += 1;
+        }
+    }
+
+    subs.save_to("result").unwrap();
 }
