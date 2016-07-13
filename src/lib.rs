@@ -5,7 +5,6 @@ use regex::Regex;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-//use std::fmt;
 use std::result;
 use std::fmt::{Display, Formatter};
 
@@ -66,7 +65,7 @@ impl SubLine {
     }
 }
 
-trait SubLineVector {
+pub trait SubLineVector {
     fn insert_line(&mut self, item: SubLine);
 
     fn by_index(&self, index: usize) -> Option<&SubLine>;
