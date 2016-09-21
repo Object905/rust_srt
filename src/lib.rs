@@ -18,6 +18,7 @@ pub struct SubLine {
     pub end: u32,
 }
 
+
 impl Display for SubLine {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let start = recover_timestamp(&self.start);
@@ -45,6 +46,10 @@ impl SubLine {
 
     pub fn get_duration(&self) -> u32 {
         self.end - self.start
+    }
+
+    pub fn get_index(&self) -> u32 {
+        self.index
     }
 
     pub fn shift(&mut self, offset: i32) -> Result<()> {
@@ -84,6 +89,9 @@ pub trait SubLineVector {
     fn by_miliseconds(&self, time: u32) -> Option<&SubLine>;
     fn by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine>;
 
+    fn nearest_by_miliseconds(&self, time: u32) -> Option<&SubLine>;
+    fn nearest_by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine>;
+
     fn save_to(&self, path: &str) -> Result<()>;
 }
 
@@ -119,6 +127,78 @@ impl SubLineVector for Subtitles {
 
     fn by_index_mut(&mut self, index: usize) -> Option<&mut SubLine> {
         self.get_mut(index - 1)
+    }
+
+    fn nearest_by_miliseconds(&self, time: u32) -> Option<&SubLine> {
+        // Returns None, if out of range
+        let mut min = 0;
+        let mut max = self.len() - 1;
+        let mut guess_index;
+
+        while max >= min {
+            guess_index = (max + min) / 2;
+            let guess = self.get(guess_index).unwrap();
+
+            let next_item_start: u32;
+
+            if let Some(sub_line) = self.get(guess_index + 1) {
+                next_item_start = sub_line.start;
+            } else if (guess.start <= time) && (time < guess.end) {
+                return Some(&guess);
+            } else {
+                return None;
+            }
+
+            if (guess.start <= time) && (time < next_item_start) {
+                return Some(&guess);
+            } else if time > guess.end {
+                min = guess_index + 1;
+            } else {
+                max = guess_index - 1;
+            }
+        }
+        None
+    }
+
+    fn nearest_by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine> {
+      // Returns None, if out of range
+        let mut min = 0;
+        let mut max = self.len() - 1;
+        let mut guess_index;
+        let mut state = false;
+        let mut result = 0;
+
+        while max >= min {
+            guess_index = (max + min) / 2;
+            let guess = self.get(guess_index).unwrap();
+
+            let next_item_start: u32;
+
+            if let Some(next_sub_line) = self.get(guess_index + 1) {
+                next_item_start = next_sub_line.start;
+            } else if (guess.start <= time) && (time < guess.end) {
+                result = guess_index;
+                state = true;
+                break;
+            } else {
+                return None;
+            }
+
+            if (guess.start <= time) && (time < next_item_start) {
+                result = guess_index;
+                state = true;
+                break;
+            } else if time > guess.end {
+                min = guess_index + 1;
+            } else {
+                max = guess_index - 1;
+            }
+        }
+        if state {
+            Some(&mut self[result])
+        } else {
+            None
+        }
     }
 
     fn by_miliseconds(&self, time: u32) -> Option<&SubLine> {
@@ -167,7 +247,9 @@ impl SubLineVector for Subtitles {
         }
         if state {
             Some(&mut self[result])
-        } else { None }
+        } else {
+            None
+        }
     }
 }
 
@@ -312,6 +394,9 @@ fn test1 () {
             i.end += 1;
         }
     }
+
+    let miliseconds = to_miliseconds(&[0,6,51,588]);
+    println!("{:?}", subs.nearest_by_miliseconds(miliseconds));
 
     subs.save_to("result").unwrap();
 }
