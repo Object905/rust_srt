@@ -317,12 +317,3 @@ pub fn prepare(path: &str) -> Result<Subtitles> {
 
     Ok(parse(content))
 }
-
-
-#[test]
-fn test() {
-    let path = "ex1";
-    let mut subs = prepare(path).unwrap();
-    let a = subs.nearest_by_miliseconds(to_miliseconds(&[0, 7, 32, 0])).unwrap();
-    println!("{:?}", a);
-}
