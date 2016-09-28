@@ -4,72 +4,64 @@ extern crate regex;
 
 use regex::Regex;
 use std::fs::File;
-use std::io::prelude::*;
 use std::path::Path;
-use std::result;
 use std::fmt::{Display, Formatter};
+use std::convert::AsRef;
+use std::io::{Error, ErrorKind, Read, Write};
 
-pub type Result<T> = result::Result<T, String>;
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubLine {
     pub text: String,
     pub index: u32,
     pub start: u32,
     pub end: u32,
+    pub start_timestamp: [u32; 4],
+    pub end_timestamp: [u32; 4],
 }
-
 
 impl Display for SubLine {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        let start = recover_timestamp(&self.start);
-        let end = recover_timestamp(&self.end);
         write!(f,
-               "{index}\r\n\
-{s_h:02}:{s_m:02}:{s_s:02},{s_ms:03} --> {e_h:02}:{e_m:02}:{e_s:02},{e_ms:03}\r\n\
-{text}\r\n\r\n",
+               "{index}\r\n{s_h:02}:{s_m:02}:{s_s:02},{s_ms:03} --> \
+                {e_h:02}:{e_m:02}:{e_s:02},{e_ms:03}\r\n{text}\r\n\r\n",
                index = self.index,
-               s_h = start[0],
-               s_m = start[1],
-               s_s = start[2],
-               s_ms = start[3],
-               e_h = end[0],
-               e_m = end[1],
-               e_s = end[2],
-               e_ms = end[3],
+               s_h = self.start_timestamp[0],
+               s_m = self.start_timestamp[1],
+               s_s = self.start_timestamp[2],
+               s_ms = self.start_timestamp[3],
+               e_h = self.end_timestamp[0],
+               e_m = self.end_timestamp[1],
+               e_s = self.end_timestamp[2],
+               e_ms = self.end_timestamp[3],
                text = self.text)
     }
 }
 
 impl SubLine {
-    pub fn get_start_timestamp(&self) -> [u32; 4] {
-        recover_timestamp(&self.start)
-    }
-
-    pub fn get_end_timestamp(&self) -> [u32; 4] {
-        recover_timestamp(&self.end)
-    }
-
     pub fn get_duration(&self) -> u32 {
         self.end - self.start
     }
 
-    pub fn shift(&mut self, offset: i32) -> Result<()> {
+    pub fn shift(&mut self, offset: i32) -> Result<(), &'static str> {
         if offset > 0 {
             self.start += offset as u32;
             self.end += offset as u32;
             Ok(())
         } else if offset < 0 {
             if (-offset as u32 >= self.start) || (-offset as u32 >= self.end) {
-                return Err("start(or end) can't be negative".to_string());
+                return Err("start(or end) is going to be negative with given offset");
             };
             self.start -= -offset as u32;
             self.end -= -offset as u32;
             Ok(())
         } else {
-            Err("offset can't be 0".to_string())
+            Err("offset can't be 0")
         }
     }
+}
+
+pub trait SaveSub<P: AsRef<Path>> {
+    fn save_to(&self, path: P) -> Result<(), Error>;
 }
 
 pub trait SubLineVector {
@@ -93,11 +85,20 @@ pub trait SubLineVector {
 
     fn nearest_by_miliseconds(&self, time: u32) -> Option<&SubLine>;
     fn nearest_by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine>;
-
-    fn save_to(&self, path: &str) -> Result<()>;
 }
 
 pub type Subtitles = Vec<SubLine>;
+
+impl <P: AsRef<Path>> SaveSub<P> for Subtitles {
+    fn save_to(&self, path: P) -> Result<(), Error> {
+        let mut file = try!(File::create(&path));
+        for line in self {
+            try!(write!(&mut file,"{repr}", repr = line));
+        }
+        try!(write!(&mut file, "\r\n\r\n"));
+        Ok(())
+    }
+}
 
 impl SubLineVector for Subtitles {
     fn insert_line(&mut self, item: SubLine) {
@@ -105,32 +106,8 @@ impl SubLineVector for Subtitles {
         let index = item.index as usize;
         self.insert(vector_index, item);
         for i in &mut self[index..] {
-            i.index += 1
+            i.index += 1;
         }
-    }
-
-    fn save_to(&self, path: &str) -> Result<()> {
-        let mut file = try!(File::create(&path).map_err(|e| e.to_string()));
-        for line in self {
-            let start = line.get_start_timestamp();
-            let end = line.get_end_timestamp();
-            try!(write!(&mut file,
-                        "{index}\r\n{s_h:02}:{s_m:02}:{s_s:02},{s_ms:03} --> \
-                         {e_h:02}:{e_m:02}:{e_s:02},{e_ms:03}\r\n{text}\r\n\r\n",
-                        index = line.index,
-                        s_h = start[0],
-                        s_m = start[1],
-                        s_s = start[2],
-                        s_ms = start[3],
-                        e_h = end[0],
-                        e_m = end[1],
-                        e_s = end[2],
-                        e_ms = end[3],
-                        text = line.text)
-                .map_err(|e| e.to_string()));
-        }
-        try!(write!(&mut file, "\r\n").map_err(|e| e.to_string()));
-        Ok(())
     }
 
     fn by_index(&self, index: usize) -> Option<&SubLine> {
@@ -142,7 +119,6 @@ impl SubLineVector for Subtitles {
     }
 
     fn nearest_by_miliseconds(&self, time: u32) -> Option<&SubLine> {
-        // binary search
         let mut min = 0;
         let mut max = self.len() - 1;
         let mut guess_index;
@@ -159,11 +135,10 @@ impl SubLineVector for Subtitles {
                 max = guess_index - 1;
             }
         }
-        self.get(min - 1)
+        self.get(max)
     }
 
     fn nearest_by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine> {
-        // binary search
         let mut min = 0;
         let mut max = self.len() - 1;
         let mut guess_index;
@@ -185,11 +160,14 @@ impl SubLineVector for Subtitles {
                 max = guess_index - 1;
             }
         }
-        if state { Some(&mut self[result]) } else { self.get_mut(min - 1) }
+        if state {
+            self.get_mut(result)
+        } else {
+            self.get_mut(max)
+        }
     }
 
     fn by_miliseconds(&self, time: u32) -> Option<&SubLine> {
-        // binary search
         let mut min = 0;
         let mut max = self.len() - 1;
         let mut guess_index;
@@ -209,9 +187,7 @@ impl SubLineVector for Subtitles {
         None
     }
 
-
     fn by_miliseconds_mut(&mut self, time: u32) -> Option<&mut SubLine> {
-        // binary search
         let mut min = 0;
         let mut max = self.len() - 1;
         let mut guess_index;
@@ -233,25 +209,17 @@ impl SubLineVector for Subtitles {
                 max = guess_index - 1;
             }
         }
-        if state { Some(&mut self[result]) } else { None }
+        if state { self.get_mut(result) } else { None }
     }
 }
 
-fn to_miliseconds(timestamp: &[u32; 4]) -> u32 {
+pub fn to_miliseconds(timestamp: &[u32; 4]) -> u32 {
     let mut result: u32 = 0;
     result += timestamp[3];
     result += timestamp[2] * 1000;
     result += timestamp[1] * 1000 * 60;
     result += timestamp[0] * 1000 * 60 * 60;
     result
-}
-
-fn recover_timestamp(miliseconds: &u32) -> [u32; 4] {
-    let hours = miliseconds / 3600000;
-    let minutes = (miliseconds - hours * 3600000) / 60000;
-    let seconds = (miliseconds - (hours * 3600000 + minutes * 60000)) / 1000;
-    let miliseconds = miliseconds - (hours * 3600000 + minutes * 60000 + seconds * 1000);
-    [hours, minutes, seconds, miliseconds]
 }
 
 lazy_static! {
@@ -271,15 +239,14 @@ lazy_static! {
 
 }
 
-fn read_file(sub_path: &str) -> Result<String> {
-    let path = Path::new(sub_path);
-    let mut file = try!(File::open(&path).map_err(|e| e.to_string()));
+fn read_file<P: AsRef<Path>> (path: P) -> Result<String, Error> {
+    let mut file = try!(File::open(&path));
     let mut content = String::new();
-    try!(file.read_to_string(&mut content).map_err(|e| e.to_string()));
+    try!(file.read_to_string(&mut content));
     Ok(content)
 }
 
-fn parse(content: String) -> Subtitles {
+fn parse(content: &str) -> Subtitles {
     let mut result: Subtitles = Subtitles::new();
 
     for cap in SUBS.captures_iter(&content) {
@@ -300,20 +267,23 @@ fn parse(content: String) -> Subtitles {
             text: cap.at(12).unwrap().to_string(),
             start: start,
             end: end,
+            start_timestamp: start_timestamp,
+            end_timestamp: end_timestamp,
         };
         result.push(line)
     }
     result
 }
 
-pub fn prepare(path: &str) -> Result<Subtitles> {
-    let mut content = try!(read_file(&path).map_err(|e| e.to_string()));
+pub fn prepare<P: AsRef<Path>> (path: P) -> Result<Subtitles, Error> {
+    let mut content = try!(read_file(&path));
     content = EOF_EMPTY_LINES.replace_all(&content, "\r\n\r\n");
     content = UNIFY_NEWLINE_STYLE.replace_all(&content, "\r\n");
 
     if !SUBS.is_match(&content) {
-        return Err("Bad srt file".to_string());
+        return Err(Error::new(ErrorKind::InvalidData,
+                              "Given file does not match with srt format specification"));
     }
 
-    Ok(parse(content))
+    Ok(parse(&content))
 }
