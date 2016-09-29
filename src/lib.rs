@@ -89,11 +89,11 @@ pub trait SubLineVector {
 
 pub type Subtitles = Vec<SubLine>;
 
-impl <P: AsRef<Path>> SaveSub<P> for Subtitles {
+impl<P: AsRef<Path>> SaveSub<P> for Subtitles {
     fn save_to(&self, path: P) -> Result<(), Error> {
         let mut file = try!(File::create(&path));
         for line in self {
-            try!(write!(&mut file,"{repr}", repr = line));
+            try!(write!(&mut file, "{repr}", repr = line));
         }
         try!(write!(&mut file, "\r\n\r\n"));
         Ok(())
@@ -239,7 +239,7 @@ lazy_static! {
 
 }
 
-fn read_file<P: AsRef<Path>> (path: P) -> Result<String, Error> {
+fn read_file<P: AsRef<Path>>(path: P) -> Result<String, Error> {
     let mut file = try!(File::open(&path));
     let mut content = String::new();
     try!(file.read_to_string(&mut content));
@@ -275,7 +275,7 @@ fn parse(content: &str) -> Subtitles {
     result
 }
 
-pub fn prepare<P: AsRef<Path>> (path: P) -> Result<Subtitles, Error> {
+pub fn prepare<P: AsRef<Path>>(path: P) -> Result<Subtitles, Error> {
     let mut content = try!(read_file(&path));
     content = EOF_EMPTY_LINES.replace_all(&content, "\r\n\r\n");
     content = UNIFY_NEWLINE_STYLE.replace_all(&content, "\r\n");
