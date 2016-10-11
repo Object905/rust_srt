@@ -70,6 +70,16 @@ impl Timestamp {
         let miliseconds = microseconds / 1000;
         Timestamp::new(0, 0, 0, miliseconds as u32)
     }
+
+    pub fn total_miliseconds(&self) -> u64 {
+        let mut result: u64 = 0;
+
+        result += self.miliseconds as u64;
+        result += (self.seconds as u64) * 1_000;
+        result += (self.minutes as u64) * 60_000;
+        result += (self.hours as u64) * 360_000;
+        result
+    }
 }
 
 impl<'a> From<&'a [u32; 4]> for Timestamp {
