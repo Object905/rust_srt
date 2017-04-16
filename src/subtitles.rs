@@ -9,7 +9,7 @@ use timestamp::Timestamp;
 use subline::SubLine;
 use utils;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Subtitles {
     pub inner: Vec<SubLine>,
 }
